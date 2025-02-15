@@ -3,6 +3,8 @@ import time
 import smtplib
 import requests
 import psycopg2
+import uvicorn
+import json
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket
 from requests.auth import HTTPBasicAuth
@@ -63,19 +65,36 @@ def send_email(subject, body):
     except Exception as e:
         print(f"❌ Error sending email: {e}")
 
-# WebSocket Route
+# WebSocket Route (Restoring Previous Implementation)
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     try:
         while True:
-            data = await websocket.receive_text()
-            print(f"📡 Received WebSocket message: {data}")
-            await websocket.send_text(f"📡 Acknowledged: {data}")
+            # Fetch drone data in real-time
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT callsign, country, latitude, longitude, altitude, velocity FROM drones ORDER BY id DESC LIMIT 10")
+            drones = cursor.fetchall()
+            cursor.close()
+            conn.close()
+
+            structured_flights = [
+                {"callsign": row[0], "country": row[1], "latitude": row[2], "longitude": row[3], "altitude": row[4], "velocity": row[5]}
+                for row in drones
+            ]
+
+            # Send valid JSON data to WebSocket
+            await websocket.send_text(json.dumps(structured_flights))
+
+            # Wait before sending next update
+            await asyncio.sleep(5)
+
     except Exception as e:
         print(f"❌ WebSocket Error: {e}")
     finally:
         await websocket.close()
+
 
 # Fetch Drone Data
 @app.get("/fetch-drones")
