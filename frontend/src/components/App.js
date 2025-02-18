@@ -7,7 +7,6 @@ const App = () => {
     <div>
       <h1>Illegal Drone Traffic Tracking</h1>
       <DroneMap />
-      <DroneUpdates />
     </div>
   );
 };
