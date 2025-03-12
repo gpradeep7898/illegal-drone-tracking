@@ -3,151 +3,186 @@ import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "./DroneMap.css";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
-import { fetchDroneUpdates } from "./DroneUpdates";
+import { FaTachometerAlt, FaExclamationTriangle, FaCog, FaEye, FaClock } from "react-icons/fa";
+
+import redMarkerIcon from "../assets/red_marker.png";
+import greenMarkerIcon from "../assets/green_marker.png";
+import airportIconImg from "../assets/airport.png";
+import militaryIconImg from "../assets/military.jpg";
+import governmentIconImg from "../assets/government.jpg";
 
 const DroneMap = () => {
-  const [droneData, setDroneData] = useState([]);
-  const socketRef = useRef(null);
+    const [droneData, setDroneData] = useState([]);
+    const [restrictedZones, setRestrictedZones] = useState([]);
+    const [showLiveDetections, setShowLiveDetections] = useState(false);
+    const [showSettings, setShowSettings] = useState(false);
+    const [lastUpdated, setLastUpdated] = useState("");
 
-  useEffect(() => {
-    fetch("http://localhost:8000/fetch-drones")
-      .then((response) => response.json())
-      .then((data) => {
-        if (data.drones) {
-          const correctedData = data.drones.map(drone => ({
-            callsign: drone.callsign ?? "Unknown",
-            latitude: drone.latitude ?? 0,
-            longitude: drone.longitude ?? 0,
-            altitude: drone.altitude ?? 0,
-            velocity: drone.velocity ?? 0,
-            timestamp: drone.timestamp ? 
-              (drone.timestamp < 10000000000 ? drone.timestamp * 1000 : drone.timestamp) 
-              : Date.now(),
-          }));
-          setDroneData(correctedData);
-        }
-      })
-      .catch((error) => console.error("❌ Error fetching drone data:", error));
-
-    socketRef.current = new WebSocket("ws://localhost:8000/ws");
-    socketRef.current.onopen = () => {
-      console.log("✅ WebSocket Connected");
-      socketRef.current.send(JSON.stringify({ message: "Hello from React!" }));
-    };
-
-    socketRef.current.onmessage = (event) => {
-        try {
-          const updatedData = JSON.parse(event.data);
-          console.log("📡 WebSocket Drone Data:", updatedData);  // Debugging logs
-      
-          if (Array.isArray(updatedData) && updatedData.length > 0) {
-            const correctedData = updatedData.map(drone => ({
-              callsign: drone.callsign ?? "Unknown",
-              latitude: drone.latitude ?? 0,
-              longitude: drone.longitude ?? 0,
-              altitude: drone.altitude ?? 0,
-              velocity: drone.velocity ?? 0,
-              country: drone.country ?? "N/A",  // Ensure country exists
-              timestamp: drone.timestamp 
-                ? (drone.timestamp < 10000000000 ? drone.timestamp * 1000 : drone.timestamp) 
-                : Date.now(),
-            }));
-      
-            setDroneData(correctedData);
-          } else {
-            console.warn("⚠️ Unexpected WebSocket Data:", updatedData);
-          }
-        } catch (error) {
-          console.error("❌ Error parsing WebSocket data:", event.data);
-        }
-    };      
-
-    socketRef.current.onclose = () => {
-      console.warn("⚠️ WebSocket Disconnected");
-    };
-
-    return () => {
-      if (socketRef.current) {
-        socketRef.current.close();
-      }
-    };
-  }, []);
-
-  const getMarkerIcon = (velocity) => {
-    return L.icon({
-      iconUrl: velocity > 50 ? "/assets/red_marker.png" : "/assets/green_marker.png",
-      iconSize: [30, 40],
-      iconAnchor: [15, 40],
-      popupAnchor: [0, -35],
-    });
+    const socketRef = useRef(null);
+    const handleToggleDetections = () => {
+      setShowLiveDetections(!showLiveDetections);
   };
+    useEffect(() => {
+        const fetchDroneData = async () => {
+            try {
+                const response = await fetch("http://127.0.0.1:8000/fetch-drones-live");
+                const data = await response.json();
+                setDroneData(data.drones || []);
+                setLastUpdated(new Date().toLocaleTimeString()); // ✅ Store last update time
+            } catch (error) {
+                console.error("Error fetching drone data:", error);
+                setDroneData([]);
+            }
+        };
 
-  return (
-    <div>
+        const fetchRestrictedZones = async () => {
+            try {
+                const response = await fetch("http://127.0.0.1:8000/restricted-zones");
+                const data = await response.json();
+                setRestrictedZones(data.restricted_zones || []);
+            } catch (error) {
+                console.error("Error fetching restricted zones:", error);
+                setRestrictedZones([]);
+            }
+        };
 
-        {/* Page Header */}
-        <div className="header">
-        Tracking Unauthorized Drone Activity in Real-Time 🛰️
-        </div>
+        fetchDroneData();
+        fetchRestrictedZones();
 
-        {/* Main Container */}
-        <div className="container">
+        socketRef.current = new WebSocket("ws://localhost:8000/ws");
 
-            {/* Map Section */}
+        socketRef.current.onopen = () => console.log("✅ WebSocket Connected");
+
+        socketRef.current.onmessage = (event) => {
+            try {
+                const receivedData = JSON.parse(event.data);
+                if (receivedData.drones && Array.isArray(receivedData.drones)) {
+                    setDroneData(receivedData.drones);
+                    setLastUpdated(new Date().toLocaleTimeString()); // ✅ Update last detected time
+                } else {
+                    console.warn("⚠️ Unexpected WebSocket Data Format:", receivedData);
+                }
+            } catch (error) {
+                console.error("❌ WebSocket Error Parsing Data:", event.data);
+            }
+        };
+
+        socketRef.current.onerror = (error) => console.error("❌ WebSocket Error:", error);
+
+        socketRef.current.onclose = () => {
+            console.warn("⚠️ WebSocket Disconnected. Reconnecting...");
+            setTimeout(() => {
+                socketRef.current = new WebSocket("ws://localhost:8000/ws");
+            }, 10000);
+        };
+
+        return () => {
+            if (socketRef.current) {
+                socketRef.current.close();
+            }
+        };
+    }, []);
+
+    const getZoneIcon = (zoneType) => {
+        let iconImage;
+        if (zoneType.includes("Airport")) iconImage = airportIconImg;
+        else if (zoneType.includes("Base") || zoneType.includes("Fort")) iconImage = militaryIconImg;
+        else iconImage = governmentIconImg;
+
+        return L.icon({
+            iconUrl: iconImage,
+            iconSize: [40, 40],
+            iconAnchor: [20, 40],
+            popupAnchor: [0, -35],
+        });
+    };
+
+    const getMarkerIcon = (drone) => {
+        return L.icon({
+            iconUrl: drone.unauthorized ? redMarkerIcon : greenMarkerIcon,
+            iconSize: [30, 40],
+            iconAnchor: [15, 40],
+            popupAnchor: [0, -35]
+        });
+    };
+
+    return (
+        <div className="drone-dashboard">
+            {/* 🚀 Navigation Bar */}
+            <nav className="navbar">
+                <h1 className="logo">🚁 Illegal Drone Tracking System</h1>
+                <div className="nav-links">
+                    <button className="nav-button" onClick={handleToggleDetections}>
+                        <FaEye /> Live Detections
+                    </button>
+                </div>
+            </nav>
+
+            {/* 🗺️ Full-Width Map */}
             <div className="map-container">
-                <MapContainer center={[37.7749, -122.4194]} zoom={3} style={{ height: "100%", width: "100%" }}>
+            <MapContainer  center={[37.7749, -99.4194]}  // Adjusted to focus on broader US view
+                    zoom={4}  // Adjusted zoom to fit the whole region
+                    style={{ height: "600px", width: "100%" }}  // Increased height
+                >
+
                     <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                    {droneData.map((drone, index) =>
-                        drone.latitude && drone.longitude ? (
-                            <Marker key={index} position={[drone.latitude, drone.longitude]} icon={getMarkerIcon(drone.velocity)}>
-                                <Popup>
-                                    <strong>🚁 Callsign: </strong>{drone.callsign}<br />
-                                    <strong>🌍 Country: </strong>{drone.country}<br />
-                                    <strong>📍 Altitude: </strong>{drone.altitude.toFixed(2)} meters<br />
-                                    <strong>💨 Velocity: </strong>{drone.velocity.toFixed(2)} km/h
-                                </Popup>
-                            </Marker>
-                        ) : null
-                    )}
+
+                    {/* ✅ Display Restricted Zones */}
+                    {restrictedZones.map((zone, index) => (
+                        <Marker key={index} position={[zone.latitude, zone.longitude]} icon={getZoneIcon(zone.name)}>
+                            <Popup>
+                                ⚠️ <strong>{zone.name}</strong>
+                                <br /> Restricted Zone - Radius: {zone.radius} km
+                            </Popup>
+                        </Marker>
+                    ))}
+
+                    {/* ✅ Display Drones */}
+                    {droneData.map((drone, index) => (
+                        <Marker key={index} position={[drone.latitude, drone.longitude]} icon={getMarkerIcon(drone)}>
+                            <Popup>
+                                🚁 <strong>{drone.callsign || "Unknown"}</strong>
+                                <br />🌍 {drone.latitude.toFixed(2)}, {drone.longitude.toFixed(2)}
+                                <br />📍 Altitude: {drone.altitude.toFixed(2)} meters
+                                <br />💨 Velocity: {drone.velocity.toFixed(2)} km/h
+                                <br />🔴 Restricted Area: {drone.unauthorized ? "YES 🚨" : "NO ✅"}
+                            </Popup>
+                        </Marker>
+                    ))}
                 </MapContainer>
             </div>
 
-            {/* Live Drone Updates */}
-            <div className="drone-updates">
-                <h3>📊 Live Drone Updates</h3>
-                <p>⚡ <strong>Avg Velocity:</strong> {droneData.length > 0 ? 
-                    (droneData.reduce((sum, drone) => sum + drone.velocity, 0) / droneData.length).toFixed(2) 
-                    : 0} km/h</p>
-                <ul>
-                    {droneData.map((drone, index) => (
-                        <li key={index}>
-                            <strong>🚁 {drone.callsign} ({drone.country})</strong> - 
-                            Lat: {drone.latitude.toFixed(2)}, Lon: {drone.longitude.toFixed(2)}, 
-                            Alt: {drone.altitude.toFixed(2)} meters, Vel: {drone.velocity.toFixed(2)} km/h
-                        </li>
-                    ))}
-                </ul>
-            </div>
-
-            {/* Drone Speed & Altitude Trends */}
-            <div className="chart-container">
-                <h2>Drone Speed & Altitude Trends</h2>
-                <ResponsiveContainer width="100%" height={300}>
-                    <LineChart data={droneData}>
-                        <XAxis dataKey="timestamp" tickFormatter={(tick) => new Date(Number(tick)).toLocaleTimeString()} />
-                        <YAxis />
-                        <Tooltip />
-                        <Legend />
-                        <Line type="monotone" dataKey="speed" stroke="#8884d8" name="Speed (km/h)" dot={false} />
-                        <Line type="monotone" dataKey="altitude" stroke="#82ca9d" name="Altitude (m)" dot={false} />
-                    </LineChart>
-                </ResponsiveContainer>
-            </div>
-
+            {/* 📡 Live Detections Modal */}
+            {showLiveDetections && (
+                <div className="modal">
+                    <div className="modal-content">
+                        <span className="close-button" onClick={() => setShowLiveDetections(false)}>×</span>
+                        <h2>📡 Live Drone Detections</h2>
+                        <p><FaClock /> Last Updated: {lastUpdated}</p>
+                        <div className="stats-container">
+                            <div className="stats-card">
+                                <h3>🚀 Total Drones</h3>
+                                <p>{droneData.length}</p>
+                            </div>
+                            <div className="stats-card unauthorized">
+                                <h3>⚠️ Unauthorized Drones</h3>
+                                <p>{droneData.filter(d => d.unauthorized).length}</p>
+                            </div>
+                        </div>
+                        <ul>
+                            {droneData.map((drone, index) => (
+                                <li key={index} className={drone.unauthorized ? "unauthorized-drone" : "authorized-drone"}>
+                                    🚁 <strong>{drone.callsign || "Unknown"}</strong> - Lat: {drone.latitude?.toFixed(2) || "N/A"}, 
+                                    Lon: {drone.longitude?.toFixed(2) || "N/A"}, Alt: {drone.altitude?.toFixed(2) || "N/A"} m, 
+                                    Vel: {drone.velocity?.toFixed(2) || "N/A"} km/h
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                </div>
+            )}
         </div>
-    </div>
-);
+    );
 };
 
 export default DroneMap;
