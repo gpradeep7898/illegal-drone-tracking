@@ -1,48 +1,60 @@
-import React, { useState, useEffect } from "react";
+import React, { useMemo } from "react";
+import "./DroneValidation.css"; // <-- Import your new CSS file
 
-const DroneValidation = () => {
-  const [validationResult, setValidationResult] = useState(null);
-  const [error, setError] = useState(null);
+const DroneValidation = ({ droneData }) => {
+  // Compute validation results using useMemo
+  const validationResult = useMemo(() => {
+    const total_drones = droneData.length;
+    const authorized = droneData.filter((drone) => !drone.unauthorized).length;
+    const unauthorized = droneData.filter((drone) => drone.unauthorized).length;
+    const unknown = 0; // or compute if needed
 
-  useEffect(() => {
-    fetchValidationData();
-    const interval = setInterval(fetchValidationData, 10000); // 🔄 Updated to refresh every 10 sec
-    return () => clearInterval(interval);
-  }, []);
-
-  const fetchValidationData = async () => {
-    try {
-        const response = await fetch("http://127.0.0.1:8000/fetch-drones-live");
-        const data = await response.json();
-
-        if (data.validation) {
-            setValidationResult(data.validation);
-        } else {
-            setValidationResult(null);  // Ensure it handles missing validation correctly
-        }
-
-        setError(null);
-    } catch (err) {
-        setError("Error fetching validation results.");
-        setValidationResult(null);
-    }
-};
-
+    const validation_passed = authorized + unauthorized === total_drones;
+    return { total_drones, authorized, unauthorized, unknown, validation_passed };
+  }, [droneData]);
 
   return (
     <div className="drone-validation">
       <h2>📊 Drone Data Validation</h2>
+      {droneData.length === 0 ? (
+        <p>No drone data available for validation.</p>
+      ) : (
+        <div className="validation-container">
+          <table className="validation-table">
+            <tbody>
+              {/* 
+                Add the .unauthorized-row class to highlight the Unauthorized row in red.
+                If you only want color when the unauthorized count is > 0, add conditional logic.
+              */}
+              <tr>
+                <th>Total Drones</th>
+                <td>{validationResult.total_drones}</td>
+              </tr>
+              <tr>
+                <th>Authorized</th>
+                <td>{validationResult.authorized}</td>
+              </tr>
+              <tr className={validationResult.unauthorized > 0 ? "unauthorized-row" : ""}>
+                <th>Unauthorized</th>
+                <td>{validationResult.unauthorized}</td>
+              </tr>
 
-      {error && <p style={{ color: "red" }}>{error}</p>}
+              <tr>
+                <th>Unknown</th>
+                <td>{validationResult.unknown}</td>
+              </tr>
+            </tbody>
+          </table>
 
-      {validationResult && (
-        <div>
-          <p><strong>🚁 Total Drones:</strong> {validationResult.total_drones}</p>
-          <p><strong>✅ Authorized:</strong> {validationResult.authorized}</p>
-          <p><strong>❌ Unauthorized:</strong> {validationResult.unauthorized}</p>
-          <p><strong>❓ Unknown:</strong> {validationResult.unknown}</p>
-          <p style={{ color: validationResult.validation_passed ? "green" : "red", fontWeight: "bold" }}>
-            {validationResult.validation_passed ? "✔ Validation Passed" : "❌ Validation Failed"}
+          <p
+            className="validation-status"
+            style={{
+              color: validationResult.validation_passed ? "green" : "red",
+            }}
+          >
+            {validationResult.validation_passed
+              ? "✔ Validation Passed"
+              : "❌ Validation Failed"}
           </p>
         </div>
       )}
