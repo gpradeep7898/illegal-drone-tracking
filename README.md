@@ -103,8 +103,7 @@ ALERT_EMAIL=recipient_email@gmail.com
 📬 Contact
 
 Developer: Pradeep Gatti
-Email: gpradeepgatti@gmail.com
-LinkedIn: linkedin.com/in/pradeepgatti
+Email: gpradeep7898@gmail.com
 GitHub: github.com/gpradeep7898
 
 📄 License
