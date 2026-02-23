@@ -24,6 +24,10 @@ logging.basicConfig(filename="drone_tracking.log", level=logging.INFO,
 
 app = FastAPI()
 
+# ✅ Cycle counter and data source tracker (added for frontend telemetry)
+_cycle_id = 0
+_data_source = "simulation"
+
 # ✅ OpenSky API URL
 OPENSKY_URL = "https://opensky-network.org/api/states/all"
 
@@ -110,12 +114,15 @@ def validate_drone_counts(drone_data):
 # ✅ Fetch Live Drone Data
 @app.get("/fetch-drones-live")
 def fetch_opensky_data():
+    global _data_source
     try:
         response = requests.get(OPENSKY_URL, timeout=10)
         flights = response.json().get("states", []) if response.status_code == 200 else []
+        _data_source = "live"
     except requests.exceptions.RequestException as e:
         logging.error(f"❌ OpenSky API error: {str(e)}. Using simulated data.")
         flights = []
+        _data_source = "simulation"
 
     structured_flights = []
 
@@ -170,8 +177,11 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     try:
         while True:
+            global _cycle_id
             drones = fetch_opensky_data()
-            await websocket.send_text(json.dumps(drones))
+            _cycle_id += 1
+            payload = {**drones, "data_source": _data_source, "cycle_id": _cycle_id}
+            await websocket.send_text(json.dumps(payload))
             await asyncio.sleep(10)
     except WebSocketDisconnect:
         logging.info("⚠️ WebSocket Disconnected.")

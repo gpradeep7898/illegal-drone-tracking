@@ -1,7 +1,9 @@
 import React from 'react';
 import ReactDOM from 'react-dom';
-import './index.css';  // Styles for the app
-import App from './components/App';  // Main App component
+import './index.css';
+import './styles/globals.css';
+import './styles/animations.css';
+import App from './components/App';
 import process from 'process';
 window.process = process;
 

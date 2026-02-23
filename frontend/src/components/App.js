@@ -1,139 +1,235 @@
-import React, { useState, useEffect, useRef } from "react";
-import DroneMap from "./DroneMap";
-import DroneUpdates from "./DroneUpdates";
-import DroneValidation from "./DroneValidation";
-//import "./App.css"; // Optional: your global styles
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import '../styles/globals.css';
+import '../styles/animations.css';
 
-const App = () => {
-  // Centralized state for drone data, restricted zones, and last update time
-  const [droneData, setDroneData] = useState([]);
-  const [restrictedZones, setRestrictedZones] = useState([]);
-  const [lastUpdated, setLastUpdated] = useState("");
-  const socketRef = useRef(null);
+import useWebSocket from '../hooks/useWebSocket';
+import useDroneHistory from '../hooks/useDroneHistory';
+import useSoundSystem from '../hooks/useSoundSystem';
 
-  // Helper to generate random drones; if forceUnauthorized is true, all drones will be flagged as unauthorized
-  const generateRandomDrones = (count, forceUnauthorized = false) => {
-    const drones = [];
-    for (let i = 0; i < count; i++) {
-      drones.push({
-        callsign: `SIM-${i + 1}`,
-        latitude: getRandomInRange(25, 49),     // US latitude range
-        longitude: getRandomInRange(-125, -67), // US longitude range
-        altitude: getRandomInRange(100, 3000),
-        velocity: getRandomInRange(30, 200),
-        unauthorized: forceUnauthorized ? true : Math.random() < 0.4,
-        reason: forceUnauthorized ? "Simulated: Restricted Zone" : "",
-      });
-    }
-    return drones;
-  };
+import BootSequence from './BootSequence';
+import TopNavBar from './TopNavBar';
+import HoloStatsPanel from './HoloStatsPanel';
+import MapComponent from './MapComponent';
+import DroneDataTable from './DroneDataTable';
+import ThreatTimeline from './ThreatTimeline';
+import DroneDetailDrawer from './DroneDetailDrawer';
+import AlertToast from './AlertToast';
+import MultiZoneAlert from './MultiZoneAlert';
+import SituationReport from './SituationReport';
+import KeyboardShortcuts from './KeyboardShortcuts';
+import BottomStatusBar from './BottomStatusBar';
 
-  // Helper to generate a random number between min and max
-  const getRandomInRange = (min, max) => {
-    return parseFloat((Math.random() * (max - min) + min).toFixed(6));
-  };
+export default function App() {
+  const [booted, setBooted] = useState(false);
+  const [selectedDrone, setSelectedDrone] = useState(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [siRepOpen, setSiRepOpen] = useState(false);
+  const [filterThreats, setFilterThreats] = useState(false);
+  const [breachEvents, setBreachEvents] = useState([]);
 
+  const {
+    drones,
+    restrictedZones,
+    wsStatus,
+    dataSource,
+    cycleId,
+    lastUpdate,
+    newThreats,
+    wsLatency,
+  } = useWebSocket();
+
+  const { update: updateHistory, getTrail } = useDroneHistory();
+  const sounds = useSoundSystem();
+
+  // Update flight history whenever drones data arrives
   useEffect(() => {
-    // Fetch real drone data from the server
-    const fetchDroneData = async () => {
-      try {
-        const response = await fetch("http://127.0.0.1:8000/fetch-drones-live");
-        const data = await response.json();
-        let realDrones = data.drones || [];
-        // Check how many drones are flagged unauthorized
-        const unauthorizedCount = realDrones.filter((d) => d.unauthorized).length;
-        // If none are unauthorized, generate 5 random unauthorized drones
-        if (unauthorizedCount === 0) {
-          const randomUnauthorized = generateRandomDrones(5, true);
-          realDrones = realDrones.concat(randomUnauthorized);
-        }
-        setDroneData(realDrones);
-        setLastUpdated(new Date().toLocaleTimeString());
-      } catch (error) {
-        console.error("Error fetching drone data:", error);
-        // Fallback: generate 10 random drones and add 5 forced unauthorized if needed
-        let fallback = generateRandomDrones(10);
-        const unauthorizedCount = fallback.filter((d) => d.unauthorized).length;
-        if (unauthorizedCount === 0) {
-          const randomUnauthorized = generateRandomDrones(5, true);
-          fallback = fallback.concat(randomUnauthorized);
-        }
-        setDroneData(fallback);
-        setLastUpdated(new Date().toLocaleTimeString());
-      }
-    };
+    if (drones && drones.length > 0) {
+      updateHistory(drones);
+    }
+  }, [drones, updateHistory]);
 
-    // Fetch restricted zones from the server
-    const fetchRestrictedZones = async () => {
-      try {
-        const response = await fetch("http://127.0.0.1:8000/restricted-zones");
-        const data = await response.json();
-        setRestrictedZones(data.restricted_zones || []);
-      } catch (error) {
-        console.error("Error fetching restricted zones:", error);
-        setRestrictedZones([]);
-      }
-    };
+  // WS connect/disconnect sounds
+  const prevWsStatus = useRef('connecting');
+  useEffect(() => {
+    if (wsStatus === 'connected' && prevWsStatus.current !== 'connected') {
+      sounds.playConnect();
+    }
+    if (wsStatus === 'disconnected' && prevWsStatus.current === 'connected') {
+      sounds.playDisconnect();
+    }
+    prevWsStatus.current = wsStatus;
+  }, [wsStatus, sounds]);
 
-    // Initial data fetches
-    fetchDroneData();
-    fetchRestrictedZones();
+  // Threat sounds
+  useEffect(() => {
+    if (!newThreats || newThreats.length === 0) return;
+    if (newThreats.length >= 2) {
+      sounds.playMultiZone();
+    } else {
+      sounds.playThreat();
+    }
+  }, [newThreats, sounds]);
 
-    // Set up WebSocket connection for live updates
-    socketRef.current = new WebSocket("ws://127.0.0.1:8000/ws");
-    socketRef.current.onopen = () => {
-      console.log("✅ WebSocket Connected");
-    };
-    socketRef.current.onmessage = (event) => {
-      try {
-        const receivedData = JSON.parse(event.data);
-        if (receivedData.drones && Array.isArray(receivedData.drones)) {
-          let updatedDrones = receivedData.drones;
-          const unauthorizedCount = updatedDrones.filter((d) => d.unauthorized).length;
-          if (unauthorizedCount === 0) {
-            const randomUnauthorized = generateRandomDrones(5, true);
-            updatedDrones = updatedDrones.concat(randomUnauthorized);
-          }
-          setDroneData(updatedDrones);
-          setLastUpdated(new Date().toLocaleTimeString());
-        } else {
-          console.warn("⚠️ Unexpected WebSocket Data Format:", receivedData);
-        }
-      } catch (error) {
-        console.error("❌ WebSocket Error Parsing Data:", event.data);
-      }
-    };
-    socketRef.current.onerror = (error) => {
-      console.error("❌ WebSocket Error:", error);
-    };
-    socketRef.current.onclose = () => {
-      console.warn("⚠️ WebSocket Disconnected. Reconnecting...");
+  // Breach events detection for map arcs
+  const prevUnauthorizedCallsigns = useRef(new Set());
+  useEffect(() => {
+    const currentUnauth = (drones || []).filter(d => d.unauthorized);
+    const newBreaches = currentUnauth.filter(d =>
+      !prevUnauthorizedCallsigns.current.has(d.callsign || d.icao24)
+    );
+
+    if (newBreaches.length > 0) {
+      const newEvents = newBreaches.map(d => {
+        // Find which zone the drone is in (inline haversine)
+        const zone = (restrictedZones || []).find(z => {
+          const zLat = z.lat != null ? z.lat : z.latitude;
+          const zLng = z.lng != null ? z.lng : z.longitude;
+          if (zLat == null || zLng == null) return false;
+          const R = 6371;
+          const dLat = (zLat - d.latitude) * Math.PI / 180;
+          const dLng = (zLng - d.longitude) * Math.PI / 180;
+          const a = Math.sin(dLat / 2) ** 2 +
+            Math.cos(d.latitude * Math.PI / 180) *
+            Math.cos(zLat * Math.PI / 180) *
+            Math.sin(dLng / 2) ** 2;
+          const dist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+          return dist <= (z.radius || 10);
+        });
+        return {
+          id: Date.now() + Math.random(),
+          lat: zone ? (zone.lat != null ? zone.lat : zone.latitude) : d.latitude,
+          lng: zone ? (zone.lng != null ? zone.lng : zone.longitude) : d.longitude,
+          ts: Date.now(),
+        };
+      });
+
+      setBreachEvents(prev => [...prev, ...newEvents]);
       setTimeout(() => {
-        socketRef.current = new WebSocket("ws://127.0.0.1:8000/ws");
-      }, 10000);
-    };
+        setBreachEvents(prev => prev.filter(e => Date.now() - e.ts < 2600));
+      }, 2700);
+    }
 
-    // Cleanup on unmount
-    return () => {
-      if (socketRef.current) {
-        socketRef.current.close();
-      }
-    };
+    prevUnauthorizedCallsigns.current = new Set(
+      (drones || []).filter(d => d.unauthorized).map(d => d.callsign || d.icao24)
+    );
+  }, [drones, restrictedZones]);
+
+  const handleDroneClick = useCallback((drone) => {
+    setSelectedDrone(drone);
+    setDrawerOpen(true);
   }, []);
 
-  return (
-    <div className="container">
-      <h1>Airspace Security Monitor</h1>
-      {/* Pass unified data to child components */}
-      <DroneMap
-        droneData={droneData}
-        restrictedZones={restrictedZones}
-        lastUpdated={lastUpdated}
-      />
-      <DroneUpdates droneData={droneData} lastUpdated={lastUpdated} />
-      <DroneValidation droneData={droneData} />
-    </div>
-  );
-};
+  const handleCloseDrawer = useCallback(() => {
+    setDrawerOpen(false);
+    setSelectedDrone(null);
+  }, []);
 
-export default App;
+  const handleRefresh = useCallback(() => {
+    fetch('http://127.0.0.1:8000/fetch-drones-live').catch(() => {});
+  }, []);
+
+  const handleToggleFilter = useCallback(() => {
+    setFilterThreats(f => !f);
+  }, []);
+
+  const multiZoneActive = (drones || []).filter(d => d.unauthorized).length >= 2;
+
+  return (
+    <>
+      <BootSequence onComplete={() => setBooted(true)} />
+
+      {booted && (
+        <div className="app-shell">
+          <TopNavBar
+            wsStatus={wsStatus}
+            wsLatency={wsLatency}
+            isMuted={sounds.isMuted}
+            onToggleMute={sounds.toggleMute}
+            onSituationReport={() => setSiRepOpen(true)}
+          />
+
+          <aside className="left-panel">
+            <HoloStatsPanel
+              drones={drones}
+              restrictedZones={restrictedZones}
+              cycleId={cycleId}
+              wsStatus={wsStatus}
+            />
+          </aside>
+
+          <main className="map-area">
+            {multiZoneActive && <MultiZoneAlert drones={drones} />}
+            <MapComponent
+              drones={drones}
+              restrictedZones={restrictedZones}
+              getTrail={getTrail}
+              breachEvents={breachEvents}
+              onDroneClick={handleDroneClick}
+              selectedCallsign={selectedDrone?.callsign}
+            />
+          </main>
+
+          <aside className="right-panel">
+            <DroneDataTable
+              drones={drones}
+              onDroneClick={handleDroneClick}
+              selectedCallsign={selectedDrone?.callsign}
+              filterThreats={filterThreats}
+            />
+            <ThreatTimeline
+              newThreats={newThreats}
+              drones={drones}
+              cycleId={cycleId}
+            />
+          </aside>
+
+          <footer className="bottom-bar">
+            <BottomStatusBar
+              drones={drones}
+              wsStatus={wsStatus}
+              dataSource={dataSource}
+              lastUpdate={lastUpdate}
+              onManualRefresh={handleRefresh}
+            />
+          </footer>
+
+          <DroneDetailDrawer
+            drone={drawerOpen ? selectedDrone : null}
+            restrictedZones={restrictedZones}
+            getTrail={getTrail}
+            onClose={handleCloseDrawer}
+          />
+
+          <AlertToast
+            newThreats={newThreats}
+            onPlaySound={() => {
+              if ((newThreats || []).length >= 2) {
+                sounds.playMultiZone();
+              } else {
+                sounds.playThreat();
+              }
+            }}
+          />
+
+          {siRepOpen && (
+            <SituationReport
+              isOpen={siRepOpen}
+              onClose={() => setSiRepOpen(false)}
+              drones={drones}
+              restrictedZones={restrictedZones}
+              dataSource={dataSource}
+            />
+          )}
+
+          <KeyboardShortcuts
+            onToggleMute={sounds.toggleMute}
+            onSituationReport={() => setSiRepOpen(true)}
+            onManualRefresh={handleRefresh}
+            onClearSelection={handleCloseDrawer}
+            onToggleFilter={handleToggleFilter}
+          />
+        </div>
+      )}
+    </>
+  );
+}
