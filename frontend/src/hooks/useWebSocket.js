@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-const WS_URL = 'ws://127.0.0.1:8000/ws';
-const REST_BASE = 'http://127.0.0.1:8000';
+const WS_URL = process.env.REACT_APP_WS_URL || 'ws://127.0.0.1:8000/ws';
+const REST_BASE = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
 const RETRY_DELAYS = [3000, 6000, 12000, 24000, 30000];
 
 /**
