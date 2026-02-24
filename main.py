@@ -86,7 +86,7 @@ def validate_drone_counts(drone_data):
     }
 
 # ✅ Send Alert Email
-#def send_alert_email(callsign: str, latitude: float, longitude: float, zone_name: str):
+def send_alert_email(callsign: str, latitude: float, longitude: float, zone_name: str):
     subject = "🚨 Unauthorized Drone Alert"
     body = (
         f"An unauthorized drone has been detected!\n\n"
@@ -178,15 +178,22 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             global _cycle_id
-            drones = fetch_opensky_data()
+            # Run blocking fetch (includes SMTP) in a thread so it doesn't freeze the event loop
+            loop = asyncio.get_event_loop()
+            drones = await loop.run_in_executor(None, fetch_opensky_data)
             _cycle_id += 1
             payload = {**drones, "data_source": _data_source, "cycle_id": _cycle_id}
             await websocket.send_text(json.dumps(payload))
             await asyncio.sleep(10)
     except WebSocketDisconnect:
         logging.info("⚠️ WebSocket Disconnected.")
+    except Exception as e:
+        logging.error(f"❌ WebSocket error: {e}")
     finally:
-        await websocket.close()
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 # ✅ Get Restricted Zones
 @app.get("/restricted-zones")
