@@ -102,9 +102,13 @@ def send_alert_email(callsign: str, latitude: float, longitude: float, zone_name
     msg["Subject"] = subject
     msg.attach(MIMEText(body, "plain"))
 
+    if not EMAIL_ADDRESS or not EMAIL_PASSWORD or not ALERT_EMAIL:
+        logging.warning("⚠️ Email credentials not configured — skipping alert email.")
+        return
+
     try:
         logging.info("Attempting to send unauthorized drone alert email...")
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=5) as server:
             server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
             server.send_message(msg)
         logging.info(f"✅ Alert email sent for {callsign}")
